@@ -82,6 +82,7 @@ TX_ACK_PK = {
     }
 }
 
+DEBUG = True
 
 class NanoGateway:
     """
@@ -115,6 +116,7 @@ class NanoGateway:
 
         self.sf = self._dr_to_sf(self.datarate)
         self.bw = self._dr_to_bw(self.datarate)
+        self.region = LoRa.AU915
 
         self.stat_alarm = None
         self.pull_alarm = None
@@ -170,11 +172,13 @@ class NanoGateway:
         self._log('Setting up the LoRa radio at {} Mhz using {}', self._freq_to_float(self.frequency), self.datarate)
         self.lora = LoRa(
             mode=LoRa.LORA,
+            region=self.region,
             frequency=self.frequency,
             bandwidth=self.bw,
             sf=self.sf,
             preamble=8,
             coding_rate=LoRa.CODING_4_5,
+            power_mode=LoRa.ALWAYS_ON,
             #tx_iq=True
         )
 
@@ -254,6 +258,8 @@ class NanoGateway:
             self.rxok += 1
             rx_data = self.lora_sock.recv(256)
             stats = lora.stats()
+            if DEBUG:
+                self._log("rx data "+ujson.dumps(stats))
             packet = self._make_node_packet(rx_data, self.rtc.now(), stats.rx_timestamp, stats.sfrx, self.bw, stats.rssi, stats.snr)
             packet = self.frequency_rounding_fix(packet, self.frequency)
             self._push_data(packet)
@@ -263,11 +269,13 @@ class NanoGateway:
             self.txnb += 1
             lora.init(
                 mode=LoRa.LORA,
+                region=self.region,
                 frequency=self.frequency,
                 bandwidth=self.bw,
                 sf=self.sf,
                 preamble=8,
                 coding_rate=LoRa.CODING_4_5,
+                power_mode=LoRa.ALWAYS_ON,
                 #tx_iq=True
                 )
 
@@ -354,11 +362,13 @@ class NanoGateway:
 
         self.lora.init(
             mode=LoRa.LORA,
+            region=self.region,
             frequency=frequency,
             bandwidth=self._dr_to_bw(datarate),
             sf=self._dr_to_sf(datarate),
             preamble=8,
             coding_rate=LoRa.CODING_4_5,
+            power_mode=LoRa.ALWAYS_ON,
             #tx_iq=True
             )
         #while utime.ticks_cpu() < tmst:
@@ -380,6 +390,8 @@ class NanoGateway:
             sf=self._dr_to_sf(datarate),
             preamble=8,
             coding_rate=LoRa.CODING_4_5,
+            region=self.region,
+            power_mode=LoRa.ALWAYS_ON,
             #tx_iq=True,
             device_class=LoRa.CLASS_C
             )
@@ -408,6 +420,7 @@ class NanoGateway:
                 elif _type == PULL_ACK:
                     self._log("Pull ack")
                 elif _type == PULL_RESP:
+                    self._log("Pull resp")
                     self.dwnb += 1
                     ack_error = TX_ERR_NONE
                     tx_pk = ujson.loads(data[4:])
