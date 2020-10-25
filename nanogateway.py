@@ -256,9 +256,11 @@ class NanoGateway:
             if DEBUG:
                 self._log("rx data "+ujson.dumps(stats))
             packet = self._make_node_packet(rx_data, self.rtc.now(), stats.rx_timestamp, stats.sfrx, self.bw, stats.rssi, stats.snr)
+            self._log('Received packet b4fix: {}', packet)
             packet = self.frequency_rounding_fix(packet, self.frequency)
+            self._log('Received packet after fix: {}', packet)
             self._push_data(packet)
-            self._log('Received packet: {}', packet)
+            
             self.rxfw += 1
         if events & LoRa.TX_PACKET_EVENT:
             self.txnb += 1
@@ -366,7 +368,7 @@ class NanoGateway:
             power_mode=LoRa.ALWAYS_ON,
             #tx_iq=True
         )
-        while utime.ticks_diff(utime.ticks_cpu(), tmst) > 0:
+        while utime.ticks_diff(tmst, utime.ticks_cpu()) > 0:
             pass
         self.lora_sock.settimeout(1)
         self.lora_sock.send(data)
@@ -424,8 +426,15 @@ class NanoGateway:
                     tx_pk = ujson.loads(data[4:])
                     payload = ubinascii.a2b_base64(tx_pk["txpk"]["data"])
                     # depending on the board, pull the downlink message 1 or 6 ms upfronnt
-                    tmst = utime.ticks_add(tx_pk["txpk"]["tmst"], self.window_compensation)
-                    t_us = utime.ticks_diff(utime.ticks_cpu(), utime.ticks_add(tmst, -15000))
+                    
+                    # tmst = utime.ticks_add(tx_pk["txpk"]["tmst"], self.window_compensation)
+                    # t_us = utime.ticks_diff(utime.ticks_cpu(), utime.ticks_add(tmst, -15000))
+                    tmst = tx_pk["txpk"]["tmst"]
+                    tmst = utime.ticks_add(tmst, self.window_compensation + 15000)
+                    t_cpu = utime.ticks_cpu()
+                    self._log("t_cpu {}",t_cpu)
+                    t_us = utime.ticks_diff(tmst, t_cpu)
+                    self._log("t_us {}",t_us)
                     if 1000 < t_us < 10000000:
                         self.uplink_alarm = Timer.Alarm(
                             handler=lambda x: self._send_down_link(
