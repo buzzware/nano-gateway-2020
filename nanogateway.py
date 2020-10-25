@@ -165,7 +165,7 @@ class NanoGateway:
             sf=self.sf,
             preamble=8,
             coding_rate=LoRa.CODING_4_5,
-            tx_iq=True
+            #tx_iq=True
         )
 
         # create a raw LoRa socket
@@ -265,7 +265,7 @@ class NanoGateway:
                 sf=self.sf,
                 preamble=8,
                 coding_rate=LoRa.CODING_4_5,
-                tx_iq=True
+                #tx_iq=True
                 )
 
     def _freq_to_float(self, frequency):
@@ -357,7 +357,7 @@ class NanoGateway:
             sf=self._dr_to_sf(datarate),
             preamble=8,
             coding_rate=LoRa.CODING_4_5,
-            tx_iq=True
+            #tx_iq=True
         )
         while utime.ticks_diff(utime.ticks_cpu(), tmst) > 0:
             pass
@@ -380,7 +380,7 @@ class NanoGateway:
             sf=self._dr_to_sf(datarate),
             preamble=8,
             coding_rate=LoRa.CODING_4_5,
-            tx_iq=True,
+            #tx_iq=True,
             device_class=LoRa.CLASS_C
         )
     
