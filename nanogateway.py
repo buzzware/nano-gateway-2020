@@ -1,15 +1,3 @@
-#!/usr/bin/env python
-#
-# Copyright (c) 2019, Pycom Limited.
-#
-# This software is licensed under the GNU GPL version 3 or any
-# later version, with permitted additional terms. For more information
-# see the Pycom Licence v1.0 document supplied with this file, or
-# available at https://www.pycom.io/opensource/licensing
-#
-
-""" LoPy LoRaWAN Nano Gateway. Can be used for both EU868 and US915. """
-
 import errno
 import machine
 import ubinascii
@@ -18,6 +6,7 @@ import uos
 import usocket
 import utime
 import _thread
+import gc
 from micropython import const
 from network import LoRa
 from network import WLAN
@@ -41,7 +30,7 @@ TX_ERR_TX_FREQ = 'TX_FREQ'
 TX_ERR_TX_POWER = 'TX_POWER'
 TX_ERR_GPS_UNLOCKED = 'GPS_UNLOCKED'
 
-UDP_THREAD_CYCLE_MS = const(20)
+UDP_THREAD_CYCLE_MS = const(10)
 
 STAT_PK = {
     'stat': {
@@ -170,6 +159,7 @@ class NanoGateway:
         self._log('Setting up the LoRa radio at {} Mhz using {}', self._freq_to_float(self.frequency), self.datarate)
         self.lora = LoRa(
             mode=LoRa.LORA,
+            region=LoRa.AU915,
             frequency=self.frequency,
             bandwidth=self.bw,
             sf=self.sf,
@@ -184,6 +174,12 @@ class NanoGateway:
         self.lora_tx_done = False
 
         self.lora.callback(trigger=(LoRa.RX_PACKET_EVENT | LoRa.TX_PACKET_EVENT), handler=self._lora_cb)
+        
+        if uos.uname()[0] == "LoPy":
+            self.window_compensation = -1000
+        else:
+            self.window_compensation = -6000
+        
         self._log('LoRaWAN nano gateway online')
 
     def stop(self):
@@ -263,6 +259,7 @@ class NanoGateway:
             self.txnb += 1
             lora.init(
                 mode=LoRa.LORA,
+                region=LoRa.AU915,
                 frequency=self.frequency,
                 bandwidth=self.bw,
                 sf=self.sf,
@@ -354,20 +351,23 @@ class NanoGateway:
 
         self.lora.init(
             mode=LoRa.LORA,
+            region=LoRa.AU915,
             frequency=frequency,
             bandwidth=self._dr_to_bw(datarate),
             sf=self._dr_to_sf(datarate),
             preamble=8,
             coding_rate=LoRa.CODING_4_5,
             tx_iq=True
-            )
-        #while utime.ticks_cpu() < tmst:
-        #    pass
+        )
+        while utime.ticks_diff(utime.ticks_cpu(), tmst) > 0:
+            pass
+        self.lora_sock.settimeout(1)
         self.lora_sock.send(data)
+        self.lora_sock.setblocking(False)
         self._log(
-            'Sent downlink packet scheduled on {:.3f}, at {:.3f} Mhz using {}: {}',
+            'Sent downlink packet scheduled on {:.3f}, at {:,d} Hz using {}: {}',
             tmst / 1000000,
-            self._freq_to_float(frequency),
+            frequency,
             datarate,
             data
         )
@@ -382,8 +382,8 @@ class NanoGateway:
             coding_rate=LoRa.CODING_4_5,
             tx_iq=True,
             device_class=LoRa.CLASS_C
-            )
-
+        )
+    
         self.lora_sock.send(data)
         self._log(
             'Sent downlink packet scheduled on {:.3f}, at {:.3f} Mhz using {}: {}',
@@ -399,6 +399,7 @@ class NanoGateway:
         """
 
         while not self.udp_stop:
+            gc.collect()
             try:
                 data, src = self.sock.recvfrom(1024)
                 _token = data[1:3]
@@ -411,32 +412,22 @@ class NanoGateway:
                     self.dwnb += 1
                     ack_error = TX_ERR_NONE
                     tx_pk = ujson.loads(data[4:])
-                    if "tmst" in data:
-                        tmst = tx_pk["txpk"]["tmst"]
-                        t_us = tmst - utime.ticks_cpu() - 15000
-                        if t_us < 0:
-                            t_us += 0xFFFFFFFF
-                        if t_us < 20000000:
-    					    self.uplink_alarm = Timer.Alarm(
-                                handler=lambda x: self._send_down_link(
-                                    ubinascii.a2b_base64(tx_pk["txpk"]["data"]),
-                                    tx_pk["txpk"]["tmst"] - 50, tx_pk["txpk"]["datr"],
-                                    int(tx_pk["txpk"]["freq"] * 1000) * 1000
-                                ),
-                                us=t_us
-                            )
-                        else:
-                            ack_error = TX_ERR_TOO_LATE
-                            self._log('Downlink timestamp error!, t_us: {}', t_us)
-                    else:
+                    payload = ubinascii.a2b_base64(tx_pk["txpk"]["data"])
+                    # depending on the board, pull the downlink message 1 or 6 ms upfronnt
+                    tmst = utime.ticks_add(tx_pk["txpk"]["tmst"], self.window_compensation)
+                    t_us = utime.ticks_diff(utime.ticks_cpu(), utime.ticks_add(tmst, -15000))
+                    if 1000 < t_us < 10000000:
                         self.uplink_alarm = Timer.Alarm(
-                            handler=lambda x: self._send_down_link_class_c(
-                                ubinascii.a2b_base64(tx_pk["txpk"]["data"]),
-                                tx_pk["txpk"]["datr"],
-                                int(tx_pk["txpk"]["freq"] * 1000) * 1000
+                            handler=lambda x: self._send_down_link(
+                                payload,
+                                tmst, tx_pk["txpk"]["datr"],
+                                int(tx_pk["txpk"]["freq"] * 1000 + 0.0005) * 1000
                             ),
-                            us=50
+                            us=t_us
                         )
+                    else:
+                        ack_error = TX_ERR_TOO_LATE
+                        self._log('Downlink timestamp error!, t_us: {}', t_us)
                     self._ack_pull_rsp(_token, ack_error)
                     self._log("Pull rsp")
             except usocket.timeout:
