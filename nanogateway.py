@@ -266,9 +266,8 @@ class NanoGateway:
             if DEBUG:
                 self._log("rx data "+ujson.dumps(stats))
             packet = self._make_node_packet(rx_data, self.rtc.now(), stats.rx_timestamp, stats.sfrx, self.bw, stats.rssi, stats.snr)
-            self._log('Received packet b4fix: {}', packet)
             packet = self.frequency_rounding_fix(packet, self.frequency)
-            self._log('Received packet after fix: {}', packet)
+            self._log('Received and uploading packet: {}', packet)
             self._push_data(packet)
             
             self.rxfw += 1
@@ -366,7 +365,6 @@ class NanoGateway:
         """
         Transmits a downlink message over LoRa.
         """
-        self._log("_send_down_link fired at {} tmst {}",utime.ticks_cpu(),tmst)
         self.lora.init(
             mode=LoRa.LORA,
             region=self.region,
@@ -381,7 +379,8 @@ class NanoGateway:
         while utime.ticks_diff(tmst, utime.ticks_cpu()) > 0:
             pass
         self.lora_sock.settimeout(1)
-        self._log("BEFORE lora_sock.send at {}",utime.ticks_cpu())
+        t_cpu = utime.ticks_cpu()
+        self._log("BEFORE lora_sock.send at {} late {}",t_cpu,t_cpu-tmst)
         self.lora_sock.send(data)
         self.lora_sock.setblocking(False)
         self._log(
@@ -436,28 +435,29 @@ class NanoGateway:
                     ack_error = TX_ERR_NONE
                     tx_pk = ujson.loads(data[4:])
                     if DEBUG:
-                        self._log("tx data "+ujson.dumps(tx_pk))
+                       self._log("tx data "+ujson.dumps(tx_pk))
                     payload = ubinascii.a2b_base64(tx_pk["txpk"]["data"])
                     # depending on the board, pull the downlink message 1 or 6 ms upfronnt
                     
                     # tmst = utime.ticks_add(tx_pk["txpk"]["tmst"], self.window_compensation)
                     # t_us = utime.ticks_diff(utime.ticks_cpu(), utime.ticks_add(tmst, -15000))
                     tmst = tx_pk["txpk"]["tmst"]
-                    tmst = utime.ticks_add(tmst, self.window_compensation + 15000)
+                    t_req = utime.ticks_add(tmst, self.window_compensation + 15000)
                     t_cpu = utime.ticks_cpu()
                     self._log("t_cpu {}",t_cpu)
-                    t_us = utime.ticks_diff(tmst, t_cpu)
+                    t_us = utime.ticks_diff(t_req, t_cpu)
                     self._log("t_us {}",t_us)
                     if 1000 < t_us < 10000000:
-                        self._log("Delaying for {} at {}, so should fire at tmst {}",t_us,t_cpu,tmst)
-                        self.uplink_alarm = Timer.Alarm(
-                            handler=lambda x: self._send_down_link(
+                        self._log("Delaying for {} at {}, so should fire at t_req {}",t_us,t_cpu,t_req)
+                        def handler(x):
+                            t_cpu = utime.ticks_cpu()
+                            self._log("_send_down_link alarm fired at {} late {}us",t_cpu,t_cpu-t_req)
+                            self._send_down_link(
                                 payload,
                                 tmst, tx_pk["txpk"]["datr"],
                                 int(tx_pk["txpk"]["freq"] * 1000 + 0.0005) * 1000
-                            ),
-                            us=t_us
-                        )
+                            )
+                        self.uplink_alarm = Timer.Alarm(handler=handler, us=t_us)
                     else:
                         ack_error = TX_ERR_TOO_LATE
                         self._log('Downlink timestamp error!, t_us: {}', t_us)
@@ -483,9 +483,11 @@ class NanoGateway:
         """
         Outputs a log message to stdout.
         """
-
-        print('[{:>10.3f}] {}'.format(
-            utime.ticks_ms() / 1000,
-            str(message).format(*args)
-            ))
+        if len(args)==0:
+            print('[{}] '.format(utime.ticks_cpu()) + str(message))
+        else:
+            print('[{}] {}'.format(
+                utime.ticks_cpu(),
+                str(message).format(*args)
+                ))
 
