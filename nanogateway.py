@@ -82,6 +82,8 @@ TX_ACK_PK = {
 }
 
 DEBUG = True
+RX_DELAY_US = 1000000
+RX_DELAY_TIMER_EARLY = 70000
 
 class NanoGateway:
     """
@@ -192,6 +194,7 @@ class NanoGateway:
             self.window_compensation = -1000
         else:
             self.window_compensation = -6000
+        self.downlink_count = 0
         
         self._log('LoRaWAN nano gateway online')
 
@@ -264,13 +267,15 @@ class NanoGateway:
             rx_data = self.lora_sock.recv(256)
             stats = lora.stats()
             if DEBUG:
-                self._log("rx data "+ujson.dumps(stats))
+                self._log("stats "+ujson.dumps(stats))
+                self._log('rx_timestamp diff: {}', utime.ticks_diff(stats.rx_timestamp,utime.ticks_cpu()))
             packet = self._make_node_packet(rx_data, self.rtc.now(), stats.rx_timestamp, stats.sfrx, self.bw, stats.rssi, stats.snr)
             packet = self.frequency_rounding_fix(packet, self.frequency)
             self._log('Received and uploading packet: {}', packet)
             self._push_data(packet)
-            
+            self._log('after _push_data')
             self.rxfw += 1
+            
         if events & LoRa.TX_PACKET_EVENT:
             self.txnb += 1
             lora.init(
@@ -369,27 +374,33 @@ class NanoGateway:
             mode=LoRa.LORA,
             region=self.region,
             frequency=frequency,
-            bandwidth=self._dr_to_bw(datarate),
+            bandwidth=self._dr_to_bw(datarate),     # LoRa.BW_125KHZ
             sf=self._dr_to_sf(datarate),
             preamble=8,
             coding_rate=LoRa.CODING_4_5,
             power_mode=LoRa.ALWAYS_ON,
             #tx_iq=True
         )
-        while utime.ticks_diff(tmst, utime.ticks_cpu()) > 0:
-            pass
+
+        self.window_compensation = -((self.downlink_count % 25) * 1000)
+        
+        t_adj = utime.ticks_add(tmst, self.window_compensation)
         self.lora_sock.settimeout(1)
         t_cpu = utime.ticks_cpu()
-        self._log("BEFORE lora_sock.send at {} late {}",t_cpu,t_cpu-tmst)
+        self._log("BEFORE lora_sock.send at {} late {} window_compensation {}",t_cpu,t_cpu-tmst,self.window_compensation)
+        while utime.ticks_diff(t_adj, utime.ticks_cpu()) > 0:
+            pass
         self.lora_sock.send(data)
+        self._log("AFTER lora_sock.send late {}",utime.ticks_cpu()-tmst)
         self.lora_sock.setblocking(False)
         self._log(
-            'Sent downlink packet scheduled on {:.3f}, at {:,d} Hz using {}: {}',
-            tmst / 1000000,
+            'Sent downlink packet scheduled on {}, at {:,d} Hz using {}: {}',
+            tmst,
             frequency,
             datarate,
             data
         )
+        self.downlink_count += 1
 
     def _send_down_link_class_c(self, data, datarate, frequency):
         self.lora.init(
@@ -407,8 +418,8 @@ class NanoGateway:
 
         self.lora_sock.send(data)
         self._log(
-            'Sent downlink packet scheduled on {:.3f}, at {:.3f} Mhz using {}: {}',
-            utime.time(),
+            'Sent downlink packet scheduled on {}, at {:.3f} Mhz using {}: {}',
+            utime.ticks_cpu(),
             self._freq_to_float(frequency),
             datarate,
             data
@@ -442,13 +453,13 @@ class NanoGateway:
                     # tmst = utime.ticks_add(tx_pk["txpk"]["tmst"], self.window_compensation)
                     # t_us = utime.ticks_diff(utime.ticks_cpu(), utime.ticks_add(tmst, -15000))
                     tmst = tx_pk["txpk"]["tmst"]
-                    t_req = utime.ticks_add(tmst, self.window_compensation + 15000)
+                    t_req = utime.ticks_add(tmst, -RX_DELAY_TIMER_EARLY)
                     t_cpu = utime.ticks_cpu()
                     self._log("t_cpu {}",t_cpu)
                     t_us = utime.ticks_diff(t_req, t_cpu)
                     self._log("t_us {}",t_us)
                     if 1000 < t_us < 10000000:
-                        self._log("Delaying for {} at {}, so should fire at t_req {}",t_us,t_cpu,t_req)
+                        self._log("Delaying for {} at {}, so should fire at t_req {}, compensated early_by {}",t_us,t_cpu,t_req,RX_DELAY_TIMER_EARLY)
                         def handler(x):
                             t_cpu = utime.ticks_cpu()
                             self._log("_send_down_link alarm fired at {} late {}us",t_cpu,t_cpu-t_req)
