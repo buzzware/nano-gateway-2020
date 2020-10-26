@@ -356,7 +356,7 @@ class NanoGateway:
         """
         Transmits a downlink message over LoRa.
         """
-
+        self._log("_send_down_link fired at {} tmst {}",utime.ticks_cpu(),tmst)
         self.lora.init(
             mode=LoRa.LORA,
             region=self.region,
@@ -371,6 +371,7 @@ class NanoGateway:
         while utime.ticks_diff(tmst, utime.ticks_cpu()) > 0:
             pass
         self.lora_sock.settimeout(1)
+        self._log("BEFORE lora_sock.send at {}",utime.ticks_cpu())
         self.lora_sock.send(data)
         self.lora_sock.setblocking(False)
         self._log(
@@ -424,6 +425,8 @@ class NanoGateway:
                     self.dwnb += 1
                     ack_error = TX_ERR_NONE
                     tx_pk = ujson.loads(data[4:])
+                    if DEBUG:
+                        self._log("tx data "+ujson.dumps(tx_pk))
                     payload = ubinascii.a2b_base64(tx_pk["txpk"]["data"])
                     # depending on the board, pull the downlink message 1 or 6 ms upfronnt
                     
@@ -436,6 +439,7 @@ class NanoGateway:
                     t_us = utime.ticks_diff(tmst, t_cpu)
                     self._log("t_us {}",t_us)
                     if 1000 < t_us < 10000000:
+                        self._log("Delaying for {} at {}, so should fire at tmst {}",t_us,t_cpu,tmst)
                         self.uplink_alarm = Timer.Alarm(
                             handler=lambda x: self._send_down_link(
                                 payload,
