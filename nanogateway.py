@@ -432,6 +432,7 @@ class NanoGateway:
 
         while not self.udp_stop:
             gc.collect()
+            utime.sleep_ms(UDP_THREAD_CYCLE_MS)
             try:
                 data, src = self.sock.recvfrom(1024)
                 _token = data[1:3]
@@ -481,9 +482,6 @@ class NanoGateway:
                     self._log('UDP recv OSError Exception: {}', ex)
             except Exception as ex:
                 self._log('UDP recv Exception: {}', ex)
-
-            # wait before trying to receive again
-            utime.sleep_ms(UDP_THREAD_CYCLE_MS)
 
         # we are to close the socket
         self.sock.close()
