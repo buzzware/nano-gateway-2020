@@ -84,6 +84,7 @@ TX_ACK_PK = {
 DEBUG = True
 RX_DELAY_US = 1000000
 RX_DELAY_TIMER_EARLY = 70000
+WINDOW_COMPENSATION = -6000     # or set this to 'cycle' to loop through different values 0 to -25000 in -1000 steps
 
 class NanoGateway:
     """
@@ -382,8 +383,11 @@ class NanoGateway:
             #tx_iq=True
         )
 
-        self.window_compensation = -((self.downlink_count % 25) * 1000)
-        
+        if WINDOW_COMPENSATION=='cycle':
+            self.window_compensation = -((self.downlink_count % 25) * 1000)
+        else:
+            self.window_compensation = WINDOW_COMPENSATION
+
         t_adj = utime.ticks_add(tmst, self.window_compensation)
         self.lora_sock.settimeout(1)
         t_cpu = utime.ticks_cpu()
