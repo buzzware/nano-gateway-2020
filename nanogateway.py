@@ -387,9 +387,11 @@ class NanoGateway:
         t_adj = utime.ticks_add(tmst, self.window_compensation)
         self.lora_sock.settimeout(1)
         t_cpu = utime.ticks_cpu()
-        self._log("BEFORE lora_sock.send at {} late {} window_compensation {}",t_cpu,t_cpu-tmst,self.window_compensation)
+        self._log("BEFORE spin wait at {} late {}",t_cpu,t_cpu-tmst)
         while utime.ticks_diff(t_adj, utime.ticks_cpu()) > 0:
             pass
+        t_cpu = utime.ticks_cpu()
+        self._log("BEFORE lora_sock.send at {} late {} window_compensation {}",t_cpu,t_cpu-tmst,self.window_compensation)
         self.lora_sock.send(data)
         self._log("AFTER lora_sock.send late {}",utime.ticks_cpu()-tmst)
         self.lora_sock.setblocking(False)
@@ -429,12 +431,21 @@ class NanoGateway:
         """
         UDP thread, reads data from the server and handles it.
         """
-
+        loops = 0
         while not self.udp_stop:
-            gc.collect()
+            if loops % 20 == 19:
+                b4 = utime.ticks_cpu()
+                gc.collect()
+                self._log("gc.collect for {} us",utime.ticks_diff(utime.ticks_cpu(),b4))
+            b4 = utime.ticks_cpu()
             utime.sleep_ms(UDP_THREAD_CYCLE_MS)
+            t_diff = utime.ticks_diff(utime.ticks_cpu(),b4)
+            if t_diff > (UDP_THREAD_CYCLE_MS*1000*1.5):
+                self._log("overslept! for {} us",t_diff)
             try:
+                b4 = utime.ticks_cpu()
                 data, src = self.sock.recvfrom(1024)
+                self._log("sock.recvfrom for {} us",utime.ticks_diff(utime.ticks_cpu(),b4))
                 _token = data[1:3]
                 _type = data[3]
                 if _type == PUSH_ACK:
